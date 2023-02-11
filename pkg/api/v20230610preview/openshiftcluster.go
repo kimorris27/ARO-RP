@@ -38,7 +38,7 @@ type OpenShiftCluster struct {
 	Properties OpenShiftClusterProperties `json:"properties,omitempty"`
 }
 
-// Tags represents an OpenShift cluster's tags.
+// Tags represents a set of tags.
 type Tags map[string]string
 
 // OpenShiftClusterProperties represents an OpenShift cluster's properties.
@@ -69,6 +69,9 @@ type OpenShiftClusterProperties struct {
 
 	// The cluster ingress profiles.
 	IngressProfiles []IngressProfile `json:"ingressProfiles,omitempty"`
+
+	// The cluster resource group tags.
+	ClusterResourceGroupTags map[string]string `json:"clusterResourceGroupTags,omitempty"`
 }
 
 // ProvisioningState represents a provisioning state.

@@ -153,6 +153,8 @@ type OpenShiftClusterProperties struct {
 	RegistryProfiles []*RegistryProfile `json:"registryProfiles,omitempty"`
 
 	HiveProfile HiveProfile `json:"hiveProfile,omitempty"`
+
+	ClusterResourceGroupTags map[string]string `json:"clusterResourceGroupTags,omitempty"`
 }
 
 // ProvisioningState represents a provisioning state

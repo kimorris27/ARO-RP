@@ -5,11 +5,12 @@ import random
 import os
 from base64 import b64decode
 
-import azext_aro.vendored_sdks.azure.mgmt.redhatopenshift.v2022_09_04.models as openshiftcluster
+import azext_aro.vendored_sdks.azure.mgmt.redhatopenshift.v2023_06_10_preview.models as openshiftcluster
 
 from azure.cli.command_modules.role import GraphError
 from azure.cli.core.commands.client_factory import get_mgmt_service_client
 from azure.cli.core.commands.client_factory import get_subscription_id
+from azure.cli.core.commands.validators import validate_tag 
 from azure.cli.core.profiles import ResourceType
 from azure.cli.core.util import sdk_no_wait
 from azure.cli.core.azclierror import FileOperationError, ResourceNotFoundError, UnauthorizedError, ValidationError
@@ -58,6 +59,7 @@ def aro_create(cmd,  # pylint: disable=too-many-locals
                apiserver_visibility=None,
                ingress_visibility=None,
                tags=None,
+               cluster_resource_group_tags=None,
                version=None,
                no_wait=False):
     if not rp_mode_development():
@@ -69,6 +71,9 @@ def aro_create(cmd,  # pylint: disable=too-many-locals
                                     'Run `az provider register -n Microsoft.RedHatOpenShift --wait`.')
 
     validate_subnets(master_subnet, worker_subnet)
+    
+    # Hacky and worth revisiting
+    cluster_resource_group_tags = { list(tag.keys())[0] : list(tag.values())[0]  for tag in [validate_tag(tag) for tag in cluster_resource_group_tags] }
 
     subscription_id = get_subscription_id(cmd.cli_ctx)
 
@@ -100,6 +105,7 @@ def aro_create(cmd,  # pylint: disable=too-many-locals
     oc = openshiftcluster.OpenShiftCluster(
         location=location,
         tags=tags,
+        cluster_resource_group_tags=cluster_resource_group_tags,
         cluster_profile=openshiftcluster.ClusterProfile(
             pull_secret=pull_secret or "",
             domain=domain or random_id,
