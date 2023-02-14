@@ -72,9 +72,6 @@ def aro_create(cmd,  # pylint: disable=too-many-locals
 
     validate_subnets(master_subnet, worker_subnet)
     
-    # Hacky and worth revisiting
-    cluster_resource_group_tags = { list(tag.keys())[0] : list(tag.values())[0]  for tag in [validate_tag(tag) for tag in cluster_resource_group_tags] }
-
     subscription_id = get_subscription_id(cmd.cli_ctx)
 
     random_id = generate_random_id()
@@ -245,7 +242,8 @@ def aro_update(cmd,
                refresh_cluster_credentials=False,
                client_id=None,
                client_secret=None,
-               no_wait=False):
+               no_wait=False,
+               cluster_resource_group_tags=None):
     # if we can't read cluster spec, we will not be able to do much. Fail.
     oc = client.open_shift_clusters.get(resource_group_name, resource_name)
 
@@ -262,6 +260,8 @@ def aro_update(cmd,
 
         if client_id is not None:
             ocUpdate.service_principal_profile.client_id = client_id
+
+    ocUpdate.cluster_resource_group_tags = cluster_resource_group_tags
 
     return sdk_no_wait(no_wait, client.open_shift_clusters.begin_update,
                        resource_group_name=resource_group_name,
