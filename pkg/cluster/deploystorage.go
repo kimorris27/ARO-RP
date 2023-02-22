@@ -13,6 +13,7 @@ import (
 
 	mgmtnetwork "github.com/Azure/azure-sdk-for-go/services/network/mgmt/2020-08-01/network"
 	mgmtfeatures "github.com/Azure/azure-sdk-for-go/services/resources/mgmt/2019-07-01/features"
+	mgmtpolicy "github.com/Azure/azure-sdk-for-go/services/resources/mgmt/2019-09-01/policy"
 	"github.com/Azure/go-autorest/autorest"
 	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/Azure/go-autorest/autorest/to"
@@ -128,6 +129,32 @@ func (m *manager) ensureResourceGroup(ctx context.Context) (err error) {
 	}
 
 	return m.env.EnsureARMResourceGroupRoleAssignment(ctx, m.fpAuthorizer, resourceGroup)
+}
+
+func (m *manager) ensureTagInheritancePolicy(ctx context.Context) error {
+	assignment := mgmtpolicy.Assignment{}
+
+	assignment.Location = &m.doc.OpenShiftCluster.Location
+
+	assignment.AssignmentProperties = &mgmtpolicy.AssignmentProperties{
+		DisplayName:        to.StringPtr(stringutils.LastTokenByte(m.doc.OpenShiftCluster.Properties.ClusterProfile.ResourceGroupID, '/')),
+		PolicyDefinitionID: to.StringPtr("/providers/Microsoft.Authorization/policyDefinitions/cd3aa116-8754-49c9-a813-ad46512ece54"),
+		Scope:              to.StringPtr(m.doc.OpenShiftCluster.Properties.ClusterProfile.ResourceGroupID),
+		Parameters: map[string]*mgmtpolicy.ParameterValuesValue{
+			"tagName": &mgmtpolicy.ParameterValuesValue{
+				Value: "my_tag",
+			},
+		},
+		EnforcementMode: mgmtpolicy.Default,
+	}
+
+	assignment.Identity = &mgmtpolicy.Identity{
+		Type: mgmtpolicy.SystemAssigned,
+	}
+
+	_, err := m.assignments.Create(ctx, *assignment.AssignmentProperties.Scope, *assignment.AssignmentProperties.DisplayName, assignment)
+
+	return err
 }
 
 func (m *manager) deployStorageTemplate(ctx context.Context) error {

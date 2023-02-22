@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/Azure/go-autorest/autorest/azure"
@@ -19,6 +20,18 @@ import (
 	"github.com/Azure/ARO-RP/pkg/util/subnet"
 	"github.com/Azure/ARO-RP/pkg/util/uuid"
 )
+
+// The maximum allowed number of cluster resource group tags.
+var maxTags = 10
+
+// Compiled regexp to use to check whether a cluster resource group tag name is valid.
+//
+// Valid tag names:
+// - Start with a letter
+// - End with a letter, number, or underscore
+// - Contain only letters, numbers, underscores, periods, and hyphens
+// - Have length <= 128
+var tagNameRegexp *regexp.Regexp = regexp.MustCompile("^[a-zA-Z]([a-zA-Z0-9_.-]{0,126}[a-zA-Z0-9_])?$")
 
 type openShiftClusterStaticValidator struct {
 	location            string
@@ -63,7 +76,7 @@ func (sv openShiftClusterStaticValidator) Static(_oc interface{}, _current *api.
 
 func (sv openShiftClusterStaticValidator) validate(oc *OpenShiftCluster, isCreate bool) error {
 	if !strings.EqualFold(oc.ID, sv.resourceID) {
-		return api.NewCloudError(http.StatusBadRequest, api.CloudErrorCodeMismatchingResourceID, "id", "The provided resource ID '%s' did not match the name in the Url '%s'.", oc.ID, sv.resourceID)
+		return api.NewCloudError(http.StatusBadRequest, api.CloudErrorCodeMismatchingResourceID, "id", "The esource ID '%s' did not match the name in the Url '%s'.", oc.ID, sv.resourceID)
 	}
 	if !strings.EqualFold(oc.Name, sv.r.ResourceName) {
 		return api.NewCloudError(http.StatusBadRequest, api.CloudErrorCodeMismatchingResourceName, "name", "The provided resource name '%s' did not match the name in the Url '%s'.", oc.Name, sv.r.ResourceName)
@@ -102,6 +115,9 @@ func (sv openShiftClusterStaticValidator) validateProperties(path string, p *Ope
 		return err
 	}
 	if err := sv.validateAPIServerProfile(path+".apiserverProfile", &p.APIServerProfile); err != nil {
+		return err
+	}
+	if err := sv.validateClusterResourceGroupTags(path+".clusterResourceGroupTags", &p.ClusterResourceGroupTags); err != nil {
 		return err
 	}
 
@@ -344,6 +360,24 @@ func (sv openShiftClusterStaticValidator) validateIngressProfile(path string, p 
 	}
 
 	return nil
+}
+
+func (sv openShiftClusterStaticValidator) validateClusterResourceGroupTags(path string, t *Tags) error {
+	if len(*t) > maxTags {
+		return api.NewCloudError(http.StatusBadRequest, api.CloudErrorCodeInvalidParameter, path, fmt.Sprintf("The provided set of tags is too large; it can contain at most %s tags.", maxTags), t)
+	}
+
+	for k, v := range *t {
+		if !sv.clusterResourceGroupTagIsValid(k, v) {
+			return api.NewCloudError(http.StatusBadRequest, api.CloudErrorCodeInvalidParameter, path, "One or more of the provided tags are invalid.", t)
+		}
+	}
+
+	return nil
+}
+
+func (sv openShiftClusterStaticValidator) clusterResourceGroupTagIsValid(key string, value string) bool {
+	return tagNameRegexp.MatchString(key) && len(value) <= 256
 }
 
 func (sv openShiftClusterStaticValidator) validateDelta(oc, current *OpenShiftCluster) error {
