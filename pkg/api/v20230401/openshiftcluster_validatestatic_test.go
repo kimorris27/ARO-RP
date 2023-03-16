@@ -801,7 +801,16 @@ func TestOpenShiftClusterStaticValidateClusterResourceGroupTags(t *testing.T) {
 					"key.": "value",
 				}
 			},
-			wantErr: "400: InvalidParameter: properties.clusterResourceGroupTags: One or more of the provided cluster resource group tags are invalid.",
+			wantErr: `400: InvalidParameter: properties.clusterResourceGroupTags: The following cluster resource group tags either have an invalid name or an invalid value:
+- key.
+
+Tag names must:
+- Start with a letter
+- End with a letter, number, or underscore
+- Contain only letters, numbers, underscores, periods, and hyphens
+- Have length <= 128
+
+Tag values have no character restrictions, but must have length <= 256.`,
 		},
 		{
 			name: "invalid tag name too long",
@@ -811,7 +820,16 @@ func TestOpenShiftClusterStaticValidateClusterResourceGroupTags(t *testing.T) {
 					"goodkey":                "value",
 				}
 			},
-			wantErr: "400: InvalidParameter: properties.clusterResourceGroupTags: One or more of the provided cluster resource group tags are invalid.",
+			wantErr: strings.Replace(`400: InvalidParameter: properties.clusterResourceGroupTags: The following cluster resource group tags either have an invalid name or an invalid value:
+- REPLACE
+
+Tag names must:
+- Start with a letter
+- End with a letter, number, or underscore
+- Contain only letters, numbers, underscores, periods, and hyphens
+- Have length <= 128
+
+Tag values have no character restrictions, but must have length <= 256.`, "REPLACE", strings.Repeat("A", 129), 1),
 		},
 		{
 			name: "invalid tag value too long",
@@ -821,7 +839,16 @@ func TestOpenShiftClusterStaticValidateClusterResourceGroupTags(t *testing.T) {
 					"key":     strings.Repeat("A", 257),
 				}
 			},
-			wantErr: "400: InvalidParameter: properties.clusterResourceGroupTags: One or more of the provided cluster resource group tags are invalid.",
+			wantErr: `400: InvalidParameter: properties.clusterResourceGroupTags: The following cluster resource group tags either have an invalid name or an invalid value:
+- key
+
+Tag names must:
+- Start with a letter
+- End with a letter, number, or underscore
+- Contain only letters, numbers, underscores, periods, and hyphens
+- Have length <= 128
+
+Tag values have no character restrictions, but must have length <= 256.`,
 		},
 	}
 
