@@ -1609,12 +1609,12 @@ func TestPutOrPatchOpenShiftCluster(t *testing.T) {
 			wantError:              fmt.Sprintf("400: DuplicateClientID: : The provided client ID '%s' is already in use by a cluster.", mockSubID),
 		},
 		{
-			name:       "create a cluster with cluster resource group tags",
+			name:       "create a cluster with resource tags",
 			apiVersion: "2023-04-01",
 			request: func(oc interface{}) {
 				_oc := oc.(*v20230401.OpenShiftCluster)
 				_oc.Properties.ClusterProfile.Version = "4.10.40"
-				_oc.Properties.ClusterResourceGroupTags = map[string]string{
+				_oc.Properties.ResourceTags = map[string]string{
 					"foo": "bar",
 					"bar": "baz",
 				}
@@ -1666,7 +1666,7 @@ func TestPutOrPatchOpenShiftCluster(t *testing.T) {
 								GatewayEnabled: true,
 							},
 							OperatorFlags: api.DefaultOperatorFlags(),
-							ClusterResourceGroupTags: map[string]string{
+							ResourceTags: map[string]string{
 								"foo": "bar",
 								"bar": "baz",
 							},
@@ -1690,7 +1690,7 @@ func TestPutOrPatchOpenShiftCluster(t *testing.T) {
 					MasterProfile: v20230401.MasterProfile{
 						EncryptionAtHost: v20230401.EncryptionAtHostDisabled,
 					},
-					ClusterResourceGroupTags: map[string]string{
+					ResourceTags: map[string]string{
 						"foo": "bar",
 						"bar": "baz",
 					},
@@ -1699,11 +1699,11 @@ func TestPutOrPatchOpenShiftCluster(t *testing.T) {
 			},
 		},
 		{
-			name:       "patch a cluster's cluster resource group tags",
+			name:       "patch a cluster's resource tags",
 			apiVersion: "2023-04-01",
 			request: func(oc interface{}) {
 				_oc := oc.(*v20230401.OpenShiftCluster)
-				_oc.Properties.ClusterResourceGroupTags = map[string]string{
+				_oc.Properties.ResourceTags = map[string]string{
 					"foo": "bar",
 					"baz": "foobar",
 				}
@@ -1747,7 +1747,7 @@ func TestPutOrPatchOpenShiftCluster(t *testing.T) {
 								EncryptionAtHost: api.EncryptionAtHostDisabled,
 							},
 							OperatorFlags: api.OperatorFlags{},
-							ClusterResourceGroupTags: map[string]string{
+							ResourceTags: map[string]string{
 								"foo": "bar",
 								"bar": "baz",
 							},
@@ -1793,7 +1793,7 @@ func TestPutOrPatchOpenShiftCluster(t *testing.T) {
 								EncryptionAtHost: api.EncryptionAtHostDisabled,
 							},
 							OperatorFlags: api.OperatorFlags{},
-							ClusterResourceGroupTags: map[string]string{
+							ResourceTags: map[string]string{
 								"foo": "bar",
 								"baz": "foobar",
 							},
@@ -1825,7 +1825,7 @@ func TestPutOrPatchOpenShiftCluster(t *testing.T) {
 					MasterProfile: v20230401.MasterProfile{
 						EncryptionAtHost: v20230401.EncryptionAtHostDisabled,
 					},
-					ClusterResourceGroupTags: map[string]string{
+					ResourceTags: map[string]string{
 						"foo": "bar",
 						"baz": "foobar",
 					},
@@ -1834,7 +1834,7 @@ func TestPutOrPatchOpenShiftCluster(t *testing.T) {
 			},
 		},
 		{
-			name:       "patch a cluster without updating cluster resource group tags",
+			name:       "patch a cluster without updating resource tags",
 			apiVersion: "2023-04-01",
 			request: func(oc interface{}) {
 				_oc := oc.(*v20230401.OpenShiftCluster)
@@ -1879,7 +1879,7 @@ func TestPutOrPatchOpenShiftCluster(t *testing.T) {
 								EncryptionAtHost: api.EncryptionAtHostDisabled,
 							},
 							OperatorFlags: api.OperatorFlags{},
-							ClusterResourceGroupTags: map[string]string{
+							ResourceTags: map[string]string{
 								"foo": "bar",
 								"bar": "baz",
 							},
@@ -1925,7 +1925,7 @@ func TestPutOrPatchOpenShiftCluster(t *testing.T) {
 								EncryptionAtHost: api.EncryptionAtHostDisabled,
 							},
 							OperatorFlags: api.OperatorFlags{},
-							ClusterResourceGroupTags: map[string]string{
+							ResourceTags: map[string]string{
 								"foo": "bar",
 								"bar": "baz",
 							},
@@ -1957,7 +1957,7 @@ func TestPutOrPatchOpenShiftCluster(t *testing.T) {
 					MasterProfile: v20230401.MasterProfile{
 						EncryptionAtHost: v20230401.EncryptionAtHostDisabled,
 					},
-					ClusterResourceGroupTags: map[string]string{
+					ResourceTags: map[string]string{
 						"foo": "bar",
 						"bar": "baz",
 					},
@@ -1966,12 +1966,12 @@ func TestPutOrPatchOpenShiftCluster(t *testing.T) {
 			},
 		},
 		{
-			name:       "patch a cluster, removing all cluster resource group tags",
+			name:       "patch a cluster, removing all resource tags",
 			apiVersion: "2023-04-01",
 			request: func(oc interface{}) {
 				_oc := oc.(*v20230401.OpenShiftCluster)
 				_oc.Properties.IngressProfiles = []v20230401.IngressProfile{{Name: "changed"}}
-				_oc.Properties.ClusterResourceGroupTags = map[string]string{}
+				_oc.Properties.ResourceTags = map[string]string{}
 			},
 			isPatch: true,
 			fixture: func(f *testdatabase.Fixture) {
@@ -2012,7 +2012,7 @@ func TestPutOrPatchOpenShiftCluster(t *testing.T) {
 								EncryptionAtHost: api.EncryptionAtHostDisabled,
 							},
 							OperatorFlags: api.OperatorFlags{},
-							ClusterResourceGroupTags: map[string]string{
+							ResourceTags: map[string]string{
 								"foo": "bar",
 								"bar": "baz",
 							},
@@ -2057,8 +2057,8 @@ func TestPutOrPatchOpenShiftCluster(t *testing.T) {
 							MasterProfile: api.MasterProfile{
 								EncryptionAtHost: api.EncryptionAtHostDisabled,
 							},
-							OperatorFlags:            api.OperatorFlags{},
-							ClusterResourceGroupTags: map[string]string{},
+							OperatorFlags: api.OperatorFlags{},
+							ResourceTags:  map[string]string{},
 						},
 					},
 				})
@@ -2087,7 +2087,7 @@ func TestPutOrPatchOpenShiftCluster(t *testing.T) {
 					MasterProfile: v20230401.MasterProfile{
 						EncryptionAtHost: v20230401.EncryptionAtHostDisabled,
 					},
-					ClusterResourceGroupTags: map[string]string{},
+					ResourceTags: map[string]string{},
 				},
 				SystemData: &v20230401.SystemData{},
 			},

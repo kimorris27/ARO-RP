@@ -89,7 +89,7 @@ var (
 	dockerSucceeded bool
 
 	// The set of tags stored in CosmosDB
-	originalClusterResourceGroupTags map[string]*string
+	originalResourceTags map[string]*string
 
 	// The set of tags that actually exists on the Azure
 	// resource group
@@ -502,7 +502,7 @@ func setup(ctx context.Context) error {
 		return err
 	}
 
-	originalClusterResourceGroupTags = oc.OpenShiftClusterProperties.ClusterResourceGroupTags
+	originalResourceTags = oc.OpenShiftClusterProperties.ResourceTags
 	clusterResourceGroupID = stringutils.LastTokenByte(*oc.OpenShiftClusterProperties.ClusterProfile.ResourceGroupID, '/')
 
 	group, err := clients.ResourceGroups.Get(ctx, clusterResourceGroupID)

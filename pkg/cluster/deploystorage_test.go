@@ -118,7 +118,7 @@ func TestEnsureResourceGroup(t *testing.T) {
 					EnsureARMResourceGroupRoleAssignment(gomock.Any(), gomock.Any(), resourceGroupName).
 					Return(nil)
 			},
-			modify: modifyManagerClusterResourceGroupTags,
+			modify: modifyManagerResourceTags,
 		},
 		{
 			name:              "success - rg doesn't exist and customer's tags and localdev mode tags both set",
@@ -143,7 +143,7 @@ func TestEnsureResourceGroup(t *testing.T) {
 					EnsureARMResourceGroupRoleAssignment(gomock.Any(), gomock.Any(), resourceGroupName).
 					Return(nil)
 			},
-			modify: modifyManagerClusterResourceGroupTags,
+			modify: modifyManagerResourceTags,
 		},
 		{
 			name:              "success - rg exists and maintain tags",
@@ -190,7 +190,7 @@ func TestEnsureResourceGroup(t *testing.T) {
 					EnsureARMResourceGroupRoleAssignment(gomock.Any(), gomock.Any(), resourceGroupName).
 					Return(nil)
 			},
-			modify: modifyManagerClusterResourceGroupTags,
+			modify: modifyManagerResourceTags,
 		},
 		{
 			name:              "fail - get rg returns generic error",
@@ -462,10 +462,10 @@ func TestEnsureInfraID(t *testing.T) {
 	}
 }
 
-// modifyManagerClusterResourceGroupTags is a helper function used by some test cases to tweak the set of
+// modifyManagerResourceTags is a helper function used by some test cases to tweak the set of
 // tags included in an OpenShiftClusterDocument.
-func modifyManagerClusterResourceGroupTags(m *manager) {
-	m.doc.OpenShiftCluster.Properties.ClusterResourceGroupTags = map[string]string{
+func modifyManagerResourceTags(m *manager) {
+	m.doc.OpenShiftCluster.Properties.ResourceTags = map[string]string{
 		"foo": "bar",
 		"bar": "baz",
 	}
