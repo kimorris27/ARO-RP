@@ -53,6 +53,8 @@ func (m *manager) adminUpdate() []steps.Step {
 	if isEverything {
 		toRun = append(toRun,
 			steps.AuthorizationRefreshingAction(m.fpAuthorizer, steps.Action(m.ensureResourceGroup)), // re-create RP RBAC if needed after tenant migration
+			steps.Action(m.ensureTaggingPolicy),
+			steps.Action(m.triggerTagRemediation),
 			steps.Action(m.createOrUpdateDenyAssignment),
 			steps.AuthorizationRefreshingAction(m.fpAuthorizer, steps.Action(m.enableServiceEndpoints)),
 			steps.Action(m.populateRegistryStorageAccountName), // must go before migrateStorageAccounts
@@ -177,6 +179,8 @@ func (m *manager) Update(ctx context.Context) error {
 		steps.Action(m.updateOpenShiftSecret),
 		steps.Action(m.updateAROSecret),
 		steps.Action(m.ensureResourceGroup),
+		steps.Action(m.ensureTaggingPolicy),
+		steps.Action(m.triggerTagRemediation),
 	}
 
 	if m.adoptViaHive {
@@ -243,6 +247,7 @@ func (m *manager) bootstrap() []steps.Step {
 		steps.Action(m.initializeClusterSPClients), // must run before clusterSPObjectID
 		steps.Action(m.clusterSPObjectID),
 		steps.AuthorizationRefreshingAction(m.fpAuthorizer, steps.Action(m.ensureResourceGroup)),
+		steps.AuthorizationRefreshingAction(m.fpAuthorizer, steps.Action(m.ensureTaggingPolicy)),
 		steps.AuthorizationRefreshingAction(m.fpAuthorizer, steps.Action(m.enableServiceEndpoints)),
 		steps.AuthorizationRefreshingAction(m.fpAuthorizer, steps.Action(m.setMasterSubnetPolicies)),
 		steps.AuthorizationRefreshingAction(m.fpAuthorizer, steps.Action(m.deployStorageTemplate)),
