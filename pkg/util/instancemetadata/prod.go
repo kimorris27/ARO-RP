@@ -7,12 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
-	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/form3tech-oss/jwt-go"
 
 	"github.com/Azure/ARO-RP/pkg/util/azureclaim"
@@ -35,7 +35,7 @@ func newProd(ctx context.Context) (InstanceMetadata, error) {
 		return nil, err
 	}
 
-	err = p.populateTenantIDFromMSI(ctx)
+	err = p.populateTenantAndClientIDFromMSI(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -43,29 +43,73 @@ func newProd(ctx context.Context) (InstanceMetadata, error) {
 	return p, nil
 }
 
-func (p *prod) populateTenantIDFromMSI(ctx context.Context) error {
-	options := p.Environment().ManagedIdentityCredentialOptions()
-	msiTokenCredential, err := azidentity.NewManagedIdentityCredential(options)
+func (p *prod) getServicePrincipalTokenAndClientIdFromMSI() (string, string, error) {
+	shard, err := getAksShardFromEnvironment()
 	if err != nil {
-		return err
+		return "", "", err
 	}
 
-	tokenRequestOptions := policy.TokenRequestOptions{
-		Scopes: []string{p.Environment().ResourceManagerScope},
+	msi_endpoint, err := url.Parse("http://169.254.169.254/metadata/identity/oauth2/token")
+	if err != nil {
+		return "", "", err
 	}
-	token, err := msiTokenCredential.GetToken(ctx, tokenRequestOptions)
+
+	msi_parameters := msi_endpoint.Query()
+	msi_parameters.Add("api-version", "2018-02-01")
+	msi_parameters.Add("resource", p.instanceMetadata.environment.ResourceManagerEndpoint)
+	msi_parameters.Add("mi_res_id", fmt.Sprintf(
+		"/subscriptions/%s/resourceGroups/%s/providers/Microsoft.ManagedIdentity/userAssignedIdentities/aro-aks-cluster-%03d-agentpool",
+		p.SubscriptionID(),
+		p.ResourceGroup(),
+		shard,
+	))
+
+	msi_endpoint.RawQuery = msi_parameters.Encode()
+	req, err := http.NewRequest("GET", msi_endpoint.String(), nil)
+	if err != nil {
+		return "", "", err
+	}
+	req.Header.Add("Metadata", "true")
+
+	resp, err := p.do(req)
+	if err != nil {
+		return "", "", err
+	}
+
+	responseBytes, err := ioutil.ReadAll(resp.Body)
+	defer resp.Body.Close()
+	if err != nil {
+		return "", "", err
+	}
+
+	var responseJson *struct {
+		AccessToken string `json:"access_token"`
+		ClientID    string `json:"client_id"`
+	}
+
+	err = json.Unmarshal(responseBytes, &responseJson)
+	if err != nil {
+		return "", "", err
+	}
+
+	return responseJson.AccessToken, responseJson.ClientID, nil
+}
+
+func (p *prod) populateTenantAndClientIDFromMSI(ctx context.Context) error {
+	accessToken, clientId, err := p.getServicePrincipalTokenAndClientIdFromMSI()
 	if err != nil {
 		return err
 	}
 
 	parser := &jwt.Parser{}
 	c := &azureclaim.AzureClaim{}
-	_, _, err = parser.ParseUnverified(token.Token, c)
+	_, _, err = parser.ParseUnverified(accessToken, c)
 	if err != nil {
 		return fmt.Errorf("the provided service principal is invalid")
 	}
 
 	p.tenantID = c.TenantID
+	p.aksMsiClientID = clientId
 
 	return nil
 }

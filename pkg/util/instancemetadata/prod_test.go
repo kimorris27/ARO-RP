@@ -4,13 +4,18 @@ package instancemetadata
 // Licensed under the Apache License 2.0.
 
 import (
+	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
-	"io"
+	"io/ioutil"
 	"net/http"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/golang/mock/gomock"
+	"github.com/pborman/uuid"
 
 	"github.com/Azure/ARO-RP/pkg/util/azureclient"
 	utilerror "github.com/Azure/ARO-RP/test/util/error"
@@ -34,7 +39,7 @@ func TestPopulateInstanceMetadata(t *testing.T) {
 					Header: http.Header{
 						"Content-Type": []string{"application/json; charset=utf-8"},
 					},
-					Body: io.NopCloser(strings.NewReader(
+					Body: ioutil.NopCloser(strings.NewReader(
 						`{
 							"subscriptionId": "rpSubscriptionId",
 							"location": "eastus",
@@ -57,7 +62,7 @@ func TestPopulateInstanceMetadata(t *testing.T) {
 					Header: http.Header{
 						"Content-Type": []string{"application/json; charset=utf-8"},
 					},
-					Body: io.NopCloser(strings.NewReader(
+					Body: ioutil.NopCloser(strings.NewReader(
 						`{
 							"subscriptionId": "rpSubscriptionId",
 							"location": "eastus",
@@ -80,7 +85,7 @@ func TestPopulateInstanceMetadata(t *testing.T) {
 					Header: http.Header{
 						"Content-Type": []string{"application/json"},
 					},
-					Body: io.NopCloser(strings.NewReader("not JSON")),
+					Body: ioutil.NopCloser(strings.NewReader("not JSON")),
 				}, nil
 			},
 			wantErr: "invalid character 'o' in literal null (expecting 'u')",
@@ -97,7 +102,7 @@ func TestPopulateInstanceMetadata(t *testing.T) {
 			do: func(*http.Request) (*http.Response, error) {
 				return &http.Response{
 					StatusCode: http.StatusBadGateway,
-					Body:       io.NopCloser(nil),
+					Body:       ioutil.NopCloser(nil),
 				}, nil
 			},
 			wantErr: "unexpected status code 502",
@@ -110,7 +115,7 @@ func TestPopulateInstanceMetadata(t *testing.T) {
 					Header: http.Header{
 						"Content-Type": []string{"text/plain"},
 					},
-					Body: io.NopCloser(nil),
+					Body: ioutil.NopCloser(nil),
 				}, nil
 			},
 			wantErr: `unexpected content type "text/plain"`,
@@ -150,6 +155,89 @@ func TestPopulateInstanceMetadata(t *testing.T) {
 
 			if !reflect.DeepEqual(p.environment, tt.wantEnvironment) {
 				t.Error(p.environment)
+			}
+		})
+	}
+}
+
+func TestPopulateTenantIDFromMSI(t *testing.T) {
+	ctx := context.Background()
+
+	for _, tt := range []struct {
+		name         string
+		mockToken    string
+		mockClientId string
+		wantTenantID string
+		wantErr      string
+	}{
+		{
+			name:         "valid",
+			mockToken:    base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`)) + "." + base64.RawURLEncoding.EncodeToString([]byte(`{"tid":"rpTenantID"}`)) + ".",
+			mockClientId: uuid.NewUUID().String(),
+			wantTenantID: "rpTenantID",
+		},
+		{
+			name:         "oauthtoken invalid",
+			mockToken:    "invalid",
+			mockClientId: uuid.NewUUID().String(),
+			wantErr:      "token contains an invalid number of segments",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			controller := gomock.NewController(t)
+			defer controller.Finish()
+
+			p := &prod{
+				instanceMetadata: instanceMetadata{
+					environment: &azureclient.PublicCloud,
+				},
+				do: func(*http.Request) (*http.Response, error) {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Header: http.Header{
+							"Content-Type": []string{"application/json; charset=utf-8"},
+						},
+						Body: ioutil.NopCloser(strings.NewReader(
+							`{
+								"subscriptionId": "rpSubscriptionId",
+								"location": "eastus",
+								"resourceGroupName": "rpResourceGroup",
+								"azEnvironment": "AzureUSGovernmentCloud"
+							}`,
+						)),
+					}, nil
+				},
+			}
+
+			err := p.populateInstanceMetadata()
+			if err != nil {
+				t.Fatal(fmt.Errorf("Unexopected error populating instancemeta"))
+			}
+
+			p.do = func(*http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header: http.Header{
+						"Content-Type": []string{"application/json; charset=utf-8"},
+					},
+					Body: ioutil.NopCloser(strings.NewReader(
+						`{
+							"access_token": "` + tt.mockToken + `",
+							"client_id": "` + tt.mockClientId + `"
+						}`,
+					)),
+				}, nil
+			}
+
+			err = p.populateTenantAndClientIDFromMSI(ctx)
+
+			if err != nil && err.Error() != tt.wantErr ||
+				err == nil && tt.wantErr != "" {
+				t.Fatal(err)
+			}
+
+			if p.tenantID != tt.wantTenantID {
+				t.Error(p.tenantID)
 			}
 		})
 	}
