@@ -35,6 +35,20 @@ func (m *MockInstanceMetadata) EXPECT() *MockInstanceMetadataMockRecorder {
 	return m.recorder
 }
 
+// AksMsiClientID mocks base method.
+func (m *MockInstanceMetadata) AksMsiClientID() string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AksMsiClientID")
+	ret0, _ := ret[0].(string)
+	return ret0
+}
+
+// AksMsiClientID indicates an expected call of AksMsiClientID.
+func (mr *MockInstanceMetadataMockRecorder) AksMsiClientID() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AksMsiClientID", reflect.TypeOf((*MockInstanceMetadata)(nil).AksMsiClientID))
+}
+
 // Environment mocks base method.
 func (m *MockInstanceMetadata) Environment() *azureclient.AROEnvironment {
 	m.ctrl.T.Helper()
