@@ -93,7 +93,7 @@ var (
 
 	// The set of tags that actually exists on the Azure
 	// resource group
-	originalClusterResourceGroupTagsAzure map[string]*string
+	originalResourceTagsAzure map[string]*string
 )
 
 func skipIfNotInDevelopmentEnv() {
@@ -510,7 +510,7 @@ func setup(ctx context.Context) error {
 		return err
 	}
 
-	originalClusterResourceGroupTagsAzure = group.Tags
+	originalResourceTagsAzure = group.Tags
 
 	return nil
 }
