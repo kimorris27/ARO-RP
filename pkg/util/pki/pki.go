@@ -4,6 +4,7 @@ package pki
 // Licensed under the Apache License 2.0.
 
 import (
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
@@ -47,7 +48,41 @@ type IntermediateInfo struct {
 // For example https://issuer.pki.azure.com/dsms/issuercertificates?getissuersv3&caName=ame
 // returns the ame certs
 func FetchDataFromGetIssuerPki(url string) (*RootCAs, error) {
-	response, err := http.Get(url)
+	pool, err := x509.SystemCertPool()
+
+	if err != nil {
+		return nil, err
+	}
+
+	response, err := http.Get("https://cacerts.digicert.com/DigiCertGlobalRootG2.crt")
+
+	if err != nil {
+		return nil, err
+	}
+
+	defer response.Body.Close()
+
+	certBody, err := ioutil.ReadAll(response.Body)
+
+	if err != nil {
+		return nil, err
+	}
+
+	rootCert, err := x509.ParseCertificate(certBody)
+
+	if err != nil {
+		return nil, err
+	}
+
+	pool.AddCert(rootCert)
+
+	client := http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{RootCAs: pool},
+		},
+	}
+
+	response, err = client.Get(url)
 
 	if err != nil {
 		return nil, err
