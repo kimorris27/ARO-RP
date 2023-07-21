@@ -80,11 +80,27 @@ func (m *manager) clusterServicePrincipalRBAC() *arm.Resource {
 func (m *manager) storageAccount(name, region string, encrypted bool) *arm.Resource {
 	virtualNetworkRules := []mgmtstorage.VirtualNetworkRule{
 		{
-			VirtualNetworkResourceID: to.StringPtr("/subscriptions/" + m.env.SubscriptionID() + "/resourceGroups/" + strings.TrimSuffix(m.env.ResourceGroup(), "-aks1") + "/providers/Microsoft.Network/virtualNetworks/rp-pe-vnet-001/subnets/rp-pe-subnet"),
+			VirtualNetworkResourceID: &m.doc.OpenShiftCluster.Properties.MasterProfile.SubnetID,
 			Action:                   mgmtstorage.Allow,
 		},
 		{
-			VirtualNetworkResourceID: to.StringPtr("/subscriptions/" + m.env.SubscriptionID() + "/resourceGroups/" + strings.TrimSuffix(m.env.ResourceGroup(), "-aks1") + "/providers/Microsoft.Network/virtualNetworks/rp-vnet/subnets/rp-subnet"),
+			VirtualNetworkResourceID: &m.doc.OpenShiftCluster.Properties.WorkerProfiles[0].SubnetID,
+			Action:                   mgmtstorage.Allow,
+		},
+		/*
+			{
+				VirtualNetworkResourceID: to.StringPtr("/subscriptions/" + m.env.SubscriptionID() + "/resourceGroups/" + strings.TrimSuffix(m.env.ResourceGroup(), "-aks1") + "/providers/Microsoft.Network/virtualNetworks/rp-pe-vnet-001/subnets/rp-pe-subnet"),
+				Action:                   mgmtstorage.Allow,
+			},
+			{
+				VirtualNetworkResourceID: to.StringPtr("/subscriptions/" + m.env.SubscriptionID() + "/resourceGroups/" + strings.TrimSuffix(m.env.ResourceGroup(), "-aks1") + "/providers/Microsoft.Network/virtualNetworks/rp-vnet/subnets/rp-subnet"),
+				Action:                   mgmtstorage.Allow,
+			},
+		*/
+		{
+			// If deploying the RP in AKS, this rule needs to be added unconditionally; hard-coded the 1 under
+			// the assumption that the RP will only run in a single AKS cluster even after sharding Hive
+			VirtualNetworkResourceID: to.StringPtr(fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/virtualNetworks/aks-net/subnets/PodSubnet-%03d", m.env.SubscriptionID(), strings.TrimSuffix(m.env.ResourceGroup(), "-aks1"), 1)),
 			Action:                   mgmtstorage.Allow,
 		},
 	}
@@ -104,15 +120,17 @@ func (m *manager) storageAccount(name, region string, encrypted bool) *arm.Resou
 		}...)
 	}
 
-	// when installing via Hive we need to allow Hive to persist the installConfig graph in the cluster's storage account
-	// TODO: add AKS shard support
-	hiveShard := 1
-	if m.installViaHive && strings.Index(name, "cluster") == 0 {
-		virtualNetworkRules = append(virtualNetworkRules, mgmtstorage.VirtualNetworkRule{
-			VirtualNetworkResourceID: to.StringPtr(fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/virtualNetworks/aks-net/subnets/PodSubnet-%03d", m.env.SubscriptionID(), m.env.ResourceGroup(), hiveShard)),
-			Action:                   mgmtstorage.Allow,
-		})
-	}
+	/*
+		// when installing via Hive we need to allow Hive to persist the installConfig graph in the cluster's storage account
+		// TODO: add AKS shard support
+		hiveShard := 1
+		if m.installViaHive && strings.Index(name, "cluster") == 0 {
+			virtualNetworkRules = append(virtualNetworkRules, mgmtstorage.VirtualNetworkRule{
+				VirtualNetworkResourceID: to.StringPtr(fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/virtualNetworks/aks-net/subnets/PodSubnet-%03d", m.env.SubscriptionID(), m.env.ResourceGroup(), hiveShard)),
+				Action:                   mgmtstorage.Allow,
+			})
+		}
+	*/
 
 	// Prod includes a gateway rule as well
 	// Once we reach a PLS limit (1000) within a vnet , we may need some refactoring here
