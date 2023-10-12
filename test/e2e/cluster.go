@@ -5,10 +5,16 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	mgmtnetwork "github.com/Azure/azure-sdk-for-go/services/network/mgmt/2020-08-01/network"
+
+	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/Azure/go-autorest/autorest/to"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -16,7 +22,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/Azure/ARO-RP/pkg/api/admin"
+	apisubnet "github.com/Azure/ARO-RP/pkg/api/util/subnet"
 	"github.com/Azure/ARO-RP/pkg/util/ready"
+	"github.com/Azure/ARO-RP/pkg/util/stringutils"
 	"github.com/Azure/ARO-RP/pkg/util/version"
 	"github.com/Azure/ARO-RP/test/util/project"
 )
@@ -52,18 +61,133 @@ var _ = Describe("Cluster", func() {
 	})
 
 	It("can run a stateful set which is using Azure Disk storage", func(ctx context.Context) {
-
 		By("creating stateful set")
-		err := createStatefulSet(ctx, clients.Kubernetes)
+		oc, _ := clients.OpenshiftClusters.Get(ctx, vnetResourceGroup, clusterName)
+		installVersion, _ := version.ParseVersion(*oc.ClusterProfile.Version)
+
+		storageClass := "managed-csi"
+
+		if installVersion.Lt(version.NewVersion(4, 11)) {
+			storageClass = "managed-premium"
+		}
+
+		err := createStatefulSet(ctx, clients.Kubernetes, storageClass)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("verifying the stateful set is ready")
 		Eventually(func(g Gomega, ctx context.Context) {
-			s, err := clients.Kubernetes.AppsV1().StatefulSets(testNamespace).Get(ctx, "busybox", metav1.GetOptions{})
+			s, err := clients.Kubernetes.AppsV1().StatefulSets(testNamespace).Get(ctx, fmt.Sprintf("busybox-%s", storageClass), metav1.GetOptions{})
 			g.Expect(err).NotTo(HaveOccurred())
 
 			g.Expect(ready.StatefulSetIsReady(s)).To(BeTrue(), "expect stateful to be ready")
 		}).WithContext(ctx).Should(Succeed())
+	})
+
+	It("can run a stateful set which is using the default Azure File storage class backed by the cluster storage account", func(ctx context.Context) {
+		By("adding the Microsoft.Storage service endpoint to each cluster subnet")
+		subnets := clusterSubnets()
+
+		for _, s := range subnets {
+			vnetID, subnetName, err := apisubnet.Split(s)
+			Expect(err).NotTo(HaveOccurred())
+
+			vnetName, err := azure.ParseResourceID(vnetID)
+			Expect(err).NotTo(HaveOccurred())
+
+			mgmtSubnet, err := clients.Subnet.Get(ctx, vnetResourceGroup, vnetName, subnetName, "")
+			Expect(err).NotTo(HaveOccurred())
+
+			if mgmtSubnet.SubnetPropertiesFormat == nil {
+				mgmtSubnet.SubnetPropertiesFormat = &mgmtnetwork.SubnetPropertiesFormat{}
+			}
+
+			if mgmtSubnet.SubnetPropertiesFormat.ServiceEndpoints == nil {
+				mgmtSubnet.SubnetPropertiesFormat.ServiceEndpoints = &[]mgmtnetwork.ServiceEndpointsPropertiesFormat{}
+			}
+
+			serviceEndpoint := mgmtnetwork.ServiceEndpointPropertiesFormat{
+				Service:   to.StringPtr("Microsoft.Storage"),
+				Locations: &[]string{"*"},
+			}
+
+			*mgmtSubnet.ServiceEndpoints = append(*mgmtSubnet.ServiceEndpoints, serviceEndpoint)
+
+			err = clients.Subnet.CreateOrUpdateAndWait(ctx, vnetResourceGroup, vnetName, subnetName, mgmtSubnet)
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		By("PUCM-ing the cluster")
+		adminOc := &admin.OpenShiftCluster{}
+		resp, err := adminRequest(ctx, http.MethodPatch, clusterResourceID, nil, true, json.RawMessage("{}"), adminOc)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+
+		Eventually(func(g Gomega, ctx context.Context) {
+			adminOc = adminGetCluster(g, ctx, clusterResourceID)
+			g.Expect(adminOc.Properties.ProvisioningState).To(Equal(admin.ProvisioningStateSucceeded))
+		}).WithContext(ctx).Should(Succeed())
+
+		Expect(adminOc.Properties.LastAdminUpdateError).To(Equal(""))
+
+		By("creating stateful set")
+		storageClass := "azurefile-csi"
+		err := createStatefulSet(ctx, clients.Kubernetes, storageClass)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("verifying the stateful set is ready")
+		Eventually(func(g Gomega, ctx context.Context) {
+			s, err := clients.Kubernetes.AppsV1().StatefulSets(testNamespace).Get(ctx, fmt.Sprintf("busybox-%s", storageClass), metav1.GetOptions{})
+			g.Expect(err).NotTo(HaveOccurred())
+
+			g.Expect(ready.StatefulSetIsReady(s)).To(BeTrue(), "expect stateful to be ready")
+		}).WithContext(ctx).Should(Succeed())
+
+		By("checking the storage account vnet rules to verify that they include the cluster subnets")
+		storageAccounts := storageAccounts()
+		clusterResourceGroup := stringutils.LastTokenByte(*adminOc.OpenShiftClusterProperties.ClusterProfile.ResourceGroupID, '/')
+
+		for _, sa := range storageAccounts {
+			account, err := clients.Storage.GetProperties(ctx, clusterResourceGroup, sa, &mgmtstorage.AccountExpand{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(account.AccountProperties).NotTo(BeNil())
+			Expect(account.NetworkRuleSet).NotTo(BeNil())
+			Expect(account.NetworkRuleSet.VirtualNetworkRules).NotTo(BeNil())
+
+			vnetRuleSubnets := make([]string, len(account.NetworkRuleSet.VirtualNetworkRules))
+
+			for i, vnr := range *account.NetworkRuleSet.VirtualNetworkRules {
+				Expect(vnr.VirtualNetworkResourceId).NotTo(BeNil())
+
+				vnetRuleSubnets[i] = strings.tolower(*vnr.VirtualNetworkResourceID)
+			}
+
+			for _, s := range subnets {
+				Expect(vnetRuleSubnets).To(ContainElement(strings.tolower(s)))
+			}
+		}
+
+		By("cleaning up the cluster subnets (removing service endpoints)")
+		for _, s := range subnets {
+			vnetID, subnetName, err := apisubnet.Split(s)
+			Expect(err).NotTo(HaveOccurred())
+
+			vnetName, err := azure.ParseResourceID(vnetID)
+			Expect(err).NotTo(HaveOccurred())
+
+			mgmtSubnet, err := clients.Subnet.Get(ctx, vnetResourceGroup, vnetName, subnetName, "")
+			Expect(err).NotTo(HaveOccurred())
+
+			if mgmtSubnet.SubnetPropertiesFormat == nil {
+				mgmtSubnet.SubnetPropertiesFormat = &mgmtnetwork.SubnetPropertiesFormat{}
+			}
+
+			mgmtSubnet.SubnetPropertiesFormat.ServiceEndpoints = &[]mgmtnetwork.ServiceEndpointsPropertiesFormat{}
+
+			err = clients.Subnet.CreateOrUpdateAndWait(ctx, vnetResourceGroup, vnetName, subnetName, mgmtSubnet)
+			Expect(err).NotTo(HaveOccurred())
+		}
+
 	})
 
 	It("can create load balancer services", func(ctx context.Context) {
@@ -115,14 +239,41 @@ var _ = Describe("Cluster", func() {
 	})
 })
 
-func createStatefulSet(ctx context.Context, cli kubernetes.Interface) error {
-	oc, _ := clients.OpenshiftClusters.Get(ctx, vnetResourceGroup, clusterName)
-	installVersion, _ := version.ParseVersion(*oc.ClusterProfile.Version)
+// clusterSubnets returns a slice containing all of the cluster subnets' resource IDs.
+func clusterSubnets() []string {
+	oc, err := clients.OpenshiftClusters.Get(ctx, vnetResourceGroup, clusterName)
+	Expect(err).NotTo(HaveOccurred())
 
-	defaultStorageClass := "managed-csi"
-	if installVersion.Lt(version.NewVersion(4, 11)) {
-		defaultStorageClass = "managed-premium"
+	subnetMap := map[string]struct{}{}
+	subnetMap[*oc.OpenShiftClusterProperties.MasterProfile.SubnetID] = struct{}{}
+
+	for _, p := range *oc.OpenShiftClusterProperties.WorkerProfiles {
+		subnetMap[*p.SubnetID] = struct{}{}
 	}
+
+	subnets := []string{}
+
+	for k, _ := range subnetMap {
+		subnets := append(subnets, k)
+	}
+
+	return subnets
+}
+
+// storageAccounts returns a slice containing the names of the
+// two ARO storage accounts.
+func storageAccounts() []string {
+	oc := adminGetCluster(Default, ctx, clusterResourceID)
+
+	clusterStorageAccountName := "cluster" + oc.Properties.StorageSuffix
+
+	return []string{
+		clusterStorageAccountName,
+		oc.Properties.ImageRegistryStorageAccountName,
+	}
+}
+
+func createStatefulSet(ctx context.Context, cli kubernetes.Interface, storageClass string) error {
 	pvcStorage, err := resource.ParseQuantity("2Gi")
 	if err != nil {
 		return err
@@ -130,7 +281,7 @@ func createStatefulSet(ctx context.Context, cli kubernetes.Interface) error {
 
 	_, err = cli.AppsV1().StatefulSets(testNamespace).Create(ctx, &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "busybox",
+			Name: fmt.Sprintf("busybox-%s", storageClass),
 		},
 		Spec: appsv1.StatefulSetSpec{
 			Selector: &metav1.LabelSelector{
@@ -170,7 +321,7 @@ func createStatefulSet(ctx context.Context, cli kubernetes.Interface) error {
 						AccessModes: []corev1.PersistentVolumeAccessMode{
 							corev1.ReadWriteOnce,
 						},
-						StorageClassName: to.StringPtr(defaultStorageClass),
+						StorageClassName: to.StringPtr(storageClass),
 						Resources: corev1.ResourceRequirements{
 							Requests: corev1.ResourceList{
 								corev1.ResourceStorage: pvcStorage,
