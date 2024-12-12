@@ -7,6 +7,7 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"net/url"
@@ -14,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -33,6 +35,8 @@ import (
 	monitoringclient "github.com/prometheus-operator/prometheus-operator/pkg/client/versioned"
 	"github.com/sirupsen/logrus"
 	"github.com/tebeka/selenium"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -40,6 +44,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd/api/latest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	internalapi "github.com/Azure/ARO-RP/pkg/api"
 	"github.com/Azure/ARO-RP/pkg/api/admin"
 	"github.com/Azure/ARO-RP/pkg/env"
 	"github.com/Azure/ARO-RP/pkg/hive"
@@ -54,6 +59,7 @@ import (
 	"github.com/Azure/ARO-RP/pkg/util/cluster"
 	msgraph_errors "github.com/Azure/ARO-RP/pkg/util/graph/graphsdk/models/odataerrors"
 	utillog "github.com/Azure/ARO-RP/pkg/util/log"
+	"github.com/Azure/ARO-RP/pkg/util/steps"
 	"github.com/Azure/ARO-RP/pkg/util/uuid"
 	"github.com/Azure/ARO-RP/pkg/util/version"
 	"github.com/Azure/ARO-RP/test/util/dynamic"
@@ -73,12 +79,14 @@ var staticResources embed.FS
 
 var (
 	disallowedInFilenameRegex = regexp.MustCompile(`[<>:"/\\|?*\x00-\x1F]`)
+	clusterProvisionPodRegex  = regexp.MustCompile(`cluster.*provision`)
 	DefaultEventuallyTimeout  = 5 * time.Minute
 )
 
 type clientSet struct {
 	Operations        redhatopenshift20231122.OperationsClient
 	OpenshiftClusters redhatopenshift20231122.OpenShiftClustersClient
+	InternalClient    cluster.InternalClient
 
 	VirtualMachines       compute.VirtualMachinesClient
 	Resources             features.ResourcesClient
@@ -116,6 +124,7 @@ var (
 	clusterName       string
 	osClusterVersion  string
 	clusterResourceID string
+	clusterDoc        *internalapi.OpenShiftCluster
 	clients           *clientSet
 )
 
@@ -436,6 +445,7 @@ func newClientSet(ctx context.Context) (*clientSet, error) {
 	return &clientSet{
 		Operations:        redhatopenshift20231122.NewOperationsClient(_env.Environment(), _env.SubscriptionID(), authorizer),
 		OpenshiftClusters: redhatopenshift20231122.NewOpenShiftClustersClient(_env.Environment(), _env.SubscriptionID(), authorizer),
+		InternalClient:    cluster.NewInternalClient(log, _env, authorizer),
 
 		VirtualMachines:       compute.NewVirtualMachinesClient(_env.Environment(), _env.SubscriptionID(), authorizer),
 		Resources:             features.NewResourcesClient(_env.Environment(), _env.SubscriptionID(), authorizer),
@@ -516,7 +526,8 @@ func setup(ctx context.Context) error {
 		return err
 	}
 
-	return nil
+	clusterDoc, err = clients.InternalClient.Get(ctx, vnetResourceGroup, clusterName)
+	return err
 }
 
 func done(ctx context.Context) error {
@@ -546,6 +557,16 @@ var _ = BeforeSuite(func() {
 		if oDataError, ok := err.(msgraph_errors.ODataErrorable); ok {
 			spew.Dump(oDataError.GetErrorEscaped())
 		}
+
+		// If Hive installation timed out, print Hive logs
+		if strings.Contains(err.Error(), steps.TimeoutConditionErrors["hiveClusterDeploymentReady"]) || strings.Contains(err.Error(), steps.TimeoutConditionErrors["hiveClusterInstallationComplete"]) {
+			log.Warning("Hive installation timed out; attempting to fetch openshift installer logs...")
+			_err := printHiveInstallerLogs()
+			if _err != nil {
+				log.Error(_err)
+			}
+		}
+
 		panic(err)
 	}
 })
@@ -560,3 +581,59 @@ var _ = AfterSuite(func() {
 		panic(err)
 	}
 })
+
+// printHiveInstallerLogs prints the cluster's installer Pod logs if it can
+// and returns an error if it can't.
+func printHiveInstallerLogs() error {
+	pods, err := clients.HiveAKS.CoreV1().Pods(clusterDoc.Properties.HiveProfile.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("Failed to list Pods in cluster's Hive namespace with following error: %w", err)
+	}
+
+	if pods.Items == nil || len(pods) == 0 {
+		return fmt.Errorf("Unexpectedly found zero Pods in cluster's Hive namespace")
+	}
+
+	var clusterProvisionPod corev1.Pod
+	for _, pod := range pods.Items {
+		if clusterProvisionPodRegex.MatchString(pod.ObjectMeta.Name) {
+			clusterProvisionPod = pod
+			break
+		}
+	}
+
+	if (clusterProvisionPod == corev1.Pod{}) {
+		return fmt.Errorf("Could not find cluster provision Pod in cluster's Hive namespace")
+	}
+
+	req := clients.HiveAKS.CoreV1().Pods(clusterDoc.Properties.HiveProfile.Namespace).GetLogs(clusterProvisionPod.ObjectMeta.Name, nil)
+	stream, err := req.Stream(ctx)
+	if err != nil {
+		return fmt.Errorf("Failed to get logs for cluster provision Pod with following error: %s", err)
+	}
+
+	defer stream.Close()
+	logs := []string{}
+	for {
+		buf := make([]byte, 2000)
+		numBytes, err := stream.Read(buf)
+		if numBytes == 0 {
+			break
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		logs = append(logs, string(buf[:numBytes]))
+	}
+
+	log := strings.Join(logs, "\n")
+	if log == "" {
+		return fmt.Errorf("Cluster provision Pod didn't have any logs")
+	}
+
+	spew.Dump(log)
+	return nil
+}
